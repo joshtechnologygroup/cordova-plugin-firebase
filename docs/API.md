@@ -51,6 +51,12 @@ Notification icon on Android:
 
 [Changing notification icon](NOTIFICATIONS.md#changing-notification-icon)
 
+## showNotification (Android only)
+Show a notification while the app is in foreground:
+```
+window.FirebasePlugin.showNotification(id, title, text, data, sound, lights, successCallback, errorCallback);
+```
+
 ## grantPermission (iOS only)
 
 Grant permission to receive push notifications (will trigger prompt):

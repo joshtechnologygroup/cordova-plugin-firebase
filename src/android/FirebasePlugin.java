@@ -1,12 +1,23 @@
 package org.apache.cordova.firebase;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.support.v4.app.NotificationCompat;
 import android.app.NotificationManager;
-import android.content.ComponentName;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.ContentResolver;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.support.v4.app.NotificationManagerCompat;
+import android.support.v4.app.NotificationCompat;
+
 import android.util.Base64;
 import android.util.Log;
 
@@ -17,43 +28,34 @@ import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.FirebaseException;
+import com.google.firebase.FirebaseTooManyRequestsException;
 import com.google.firebase.analytics.FirebaseAnalytics;
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
+import com.google.firebase.auth.PhoneAuthCredential;
+import com.google.firebase.auth.PhoneAuthProvider;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.perf.FirebasePerformance;
+import com.google.firebase.perf.metrics.Trace;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigInfo;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigValue;
-import com.google.firebase.perf.FirebasePerformance;
-import com.google.firebase.perf.metrics.Trace;
-
 import me.leolin.shortcutbadger.ShortcutBadger;
-
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.PluginResult;
 import org.apache.cordova.CordovaWebView;
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-
-// Firebase PhoneAuth
+import java.lang.reflect.Field;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.auth.AuthResult;
-import com.google.firebase.FirebaseException;
-import com.google.firebase.auth.FirebaseAuthException;
-import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
-import com.google.firebase.FirebaseTooManyRequestsException;
-import com.google.firebase.auth.PhoneAuthCredential;
-import com.google.firebase.auth.PhoneAuthProvider;
+// Firebase PhoneAuth
 
 public class FirebasePlugin extends CordovaPlugin {
 
@@ -200,6 +202,23 @@ public class FirebasePlugin extends CordovaPlugin {
             return true;
         } else if (action.equals("clearAllNotifications")) {
             this.clearAllNotifications(callbackContext);
+            return true;
+        } else if (action.equals("showNotification")) {
+            JSONObject jsonObject = args.getJSONObject(3);
+            Map<String, String> data = new HashMap<String, String>();
+            Iterator<String> keys = jsonObject.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                String value = jsonObject.get(key).toString();
+                data.put(key, value);
+            }
+            String sound = args.getString(4);
+            String lights = args.getString(4);
+            sound = sound == "null" ? null : sound;
+            lights = lights == "null" ? null : lights;
+            this.showNotification(callbackContext, args.getString(0), args.getString(1), args.getString(2), data,
+                sound, lights
+            );
             return true;
         }
 
@@ -747,7 +766,7 @@ public class FirebasePlugin extends CordovaPlugin {
                             try {
                                 String verificationId = null;
                                 String code = null;
-								
+
                                 Field[] fields = credential.getClass().getDeclaredFields();
                                 for (Field field : fields) {
                                     Class type = field.getType();
@@ -814,7 +833,7 @@ public class FirebasePlugin extends CordovaPlugin {
                             callbackContext.sendPluginResult(pluginresult);
                         }
                     };
-	
+
                     PhoneAuthProvider.getInstance().verifyPhoneNumber(number, // Phone number to verify
                             timeOutDuration, // Timeout duration
                             TimeUnit.SECONDS, // Unit of timeout
@@ -827,7 +846,7 @@ public class FirebasePlugin extends CordovaPlugin {
             }
         });
     }
-	
+
     private static String getPrivateField(PhoneAuthCredential credential, Field field) {
         try {
             field.setAccessible(true);
@@ -963,6 +982,115 @@ public class FirebasePlugin extends CordovaPlugin {
                     NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
                     nm.cancelAll();
                     callbackContext.success();
+                } catch (Exception e) {
+                    Crashlytics.log(e.getMessage());
+                }
+            }
+        });
+    }
+
+    private String getStringResource(String name, Context context) {
+        return context.getString(
+            context.getResources().getIdentifier(
+                name, "string", context.getPackageName()
+            )
+        );
+    }
+
+    private void showNotification(
+        final CallbackContext callbackContext, final String id, final String title, final String messageBody,
+        final Map<String, String> data, final String sound, final String lights
+    ) {
+        final FirebasePlugin self = this;
+        cordova.getThreadPool().execute(new Runnable() {
+            public void run() {
+                try {
+                    Bundle bundle = new Bundle();
+                    for (String key : data.keySet()) {
+                        bundle.putString(key, data.get(key));
+                    }
+
+                    final Context context = self.cordova.getActivity().getApplicationContext();
+                    PackageManager packagemanager = context.getPackageManager();
+
+                    Intent intent = new Intent(context, OnNotificationOpenReceiver.class);
+                    intent.putExtras(bundle);
+                    PendingIntent pendingIntent = PendingIntent.getBroadcast(context, id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT);
+
+                    String channelId = self.getStringResource("default_notification_channel_id", context);
+                    String channelName = self.getStringResource("default_notification_channel_name", context);
+                    Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
+                    NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(context, channelId);
+                    notificationBuilder
+                        .setContentTitle(title)
+                        .setContentText(messageBody)
+                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                        .setStyle(new NotificationCompat.BigTextStyle().bigText(messageBody))
+                        .setAutoCancel(true)
+                        .setSound(defaultSoundUri)
+                        .setContentIntent(pendingIntent)
+                        .setPriority(NotificationCompat.PRIORITY_MAX);
+
+                    int resID = context.getResources().getIdentifier("notification_icon", "drawable", context.getPackageName());
+                    if (resID != 0) {
+                        notificationBuilder.setSmallIcon(resID);
+                    } else {
+                        notificationBuilder.setSmallIcon(context.getApplicationInfo().icon);
+                    }
+
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        int accentID = context.getResources().getIdentifier("accent", "color", context.getPackageName());
+                        notificationBuilder.setColor(context.getResources().getColor(accentID, null));
+                    }
+                    if (sound != null) {
+                        Log.d(TAG, "sound before path is: " + sound);
+                        Uri soundPath = Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.getPackageName() + "/raw/" + sound);
+                        Log.d(TAG, "Parsed sound is: " + soundPath.toString());
+                        notificationBuilder.setSound(soundPath);
+                    } else {
+                        Log.d(TAG, "Sound was null ");
+                    }
+
+                    int lightArgb = 0;
+                    if (lights != null) {
+                        try {
+                            String[] lightsComponents = lights.replaceAll("\\s", "").split(",");
+                            if (lightsComponents.length == 3) {
+                                lightArgb = Color.parseColor(lightsComponents[0]);
+                                int lightOnMs = Integer.parseInt(lightsComponents[1]);
+                                int lightOffMs = Integer.parseInt(lightsComponents[2]);
+
+                                notificationBuilder.setLights(lightArgb, lightOnMs, lightOffMs);
+                            }
+                        } catch (Exception e) {
+                        }
+                    }
+
+                    Notification notification = notificationBuilder.build();
+                    NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+
+                    // Since android Oreo notification channel is needed.
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        List<NotificationChannel> channels = notificationManager.getNotificationChannels();
+
+                        boolean channelExists = false;
+                        for (int i = 0; i < channels.size(); i++) {
+                            if (channelId.equals(channels.get(i).getId())) {
+                                channelExists = true;
+                            }
+                        }
+
+                        if (!channelExists) {
+                            NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH);
+                            channel.enableLights(true);
+                            channel.enableVibration(true);
+                            channel.setShowBadge(true);
+                            notificationManager.createNotificationChannel(channel);
+                        }
+                    }
+
+                    notificationManager.notify(id.hashCode(), notification);
                 } catch (Exception e) {
                     Crashlytics.log(e.getMessage());
                 }
