@@ -10,6 +10,8 @@ xmlns:android="http://schemas.android.com/apk/res/android">
 		<engine name="cordova" version=">=3.2.0" />
 	</engines>
 
+	<preference name="ACCENT_COLOR" />
+
 	<platform name="android">
 		<hook type="after_plugin_install" src="scripts/android/after_plugin_install.js" />
 		<hook type="before_plugin_uninstall" src="scripts/android/before_plugin_uninstall.js" />
@@ -53,6 +55,9 @@ xmlns:android="http://schemas.android.com/apk/res/android">
 		<source-file src="src/android/FirebasePluginMessageReceiver.java" target-dir="src/org/apache/cordova/firebase" />
 		<source-file src="src/android/FirebasePluginMessageReceiverManager.java" target-dir="src/org/apache/cordova/firebase" />
 		<source-file src="src/android/colors.xml" target-dir="res/values" />
+		<config-file target="res/values/colors.xml" parent="/resources" >
+			<color name="accent">$ACCENT_COLOR</color>
+		</config-file>
 
 		<framework src="src/android/build.gradle" custom="true" type="gradleReference" />
 		<framework src="com.google.android.gms:play-services-tagmanager:+" />
